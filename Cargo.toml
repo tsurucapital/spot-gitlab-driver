@@ -1,0 +1,27 @@
+[package]
+name = "spot-gitlab-driver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.97"
+aws-config = "1.6.0"
+aws-sdk-ec2 = "1.118.0"
+aws-sdk-ssm = "1.71.0"
+bpaf = { version = "0.9.19", features = ["derive"] }
+rustix = { version = "1.0.2", features = ["fs"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tokio = { version = "1.44.1", features = [
+    "macros",
+    "rt-multi-thread",
+    "tokio-macros",
+    "tracing",
+] }
+tracing = "0.1.41"
+tracing-journald = "0.3.1"
+tracing-subscriber = { version = "0.3.19", features = [
+    "env-filter",
+    "tracing",
+] }
+openssh = "0.11.5"
