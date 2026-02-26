@@ -592,3 +592,52 @@ impl State {
         Ok(std::fs::remove_file(location)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/project"),
+            Some("project".to_string())
+        );
+    }
+
+    #[test]
+    fn three_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/group/project"),
+            Some("group-project".to_string())
+        );
+    }
+
+    #[test]
+    fn four_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/a/b/c"),
+            Some("a-b-c".to_string())
+        );
+    }
+
+    #[test]
+    fn single_component() {
+        assert_eq!(resource_prefix_from_project_path("org"), None);
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(resource_prefix_from_project_path(""), None);
+    }
+
+    #[test]
+    fn trailing_slash() {
+        assert_eq!(resource_prefix_from_project_path("org/project/"), None);
+    }
+
+    #[test]
+    fn double_slash() {
+        assert_eq!(resource_prefix_from_project_path("org//project"), None);
+    }
+}
