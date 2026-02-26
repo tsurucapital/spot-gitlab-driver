@@ -3,7 +3,7 @@ use aws_sdk_ec2::types::{
 };
 use bpaf::{Bpaf, Parser};
 use std::path::{Path, PathBuf};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Debug, Clone, Bpaf)]
 struct Opts {
@@ -78,12 +78,40 @@ async fn main() {
     }
 }
 
+/// Derive the AWS resource name prefix from the GitLab project path.
+///
+/// Strips the first path component (top-level group) and joins the rest with `-`.
+/// e.g. "org/group/project" → "group-project", "org/project" → "project"
+fn resource_prefix_from_project_path(project_path: &str) -> Option<String> {
+    let parts: Vec<&str> = project_path.split('/').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let suffix = &parts[1..];
+    if suffix.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    Some(suffix.join("-"))
+}
+
 #[tracing::instrument]
 async fn config() {
-    let Ok(project_name) = std::env::var("CUSTOM_ENV_CI_PROJECT_NAME") else {
-        eprintln!("CUSTOM_ENV_CI_PROJECT_NAME env var not set");
+    let Ok(project_path) = std::env::var("CUSTOM_ENV_CI_PROJECT_PATH") else {
+        eprintln!("CUSTOM_ENV_CI_PROJECT_PATH env var not set");
         build_failure();
     };
+    let Some(resource_prefix) = resource_prefix_from_project_path(&project_path) else {
+        eprintln!(
+            "CUSTOM_ENV_CI_PROJECT_PATH has unexpected format \
+             (expected 'org/project' or 'org/group/project', got '{project_path}')"
+        );
+        build_failure();
+    };
+    tracing::debug!(
+        ?project_path,
+        ?resource_prefix,
+        "Derived resource prefix from project path"
+    );
 
     // If timeout is specified, set upper bound an the spot fleet request.
     let valid_until = std::env::var("CUSTOM_ENV_CI_JOB_TIMEOUT")
@@ -106,7 +134,7 @@ async fn config() {
     let ec2 = aws_sdk_ec2::Client::new(&sdk);
 
     let private_key = {
-        let key_name = &format!("{project_name}-ci-build");
+        let key_name = &format!("{resource_prefix}-ci-build");
         tracing::debug!(?key_name, "Fetching SSH key pair for the builder");
         let describe_key_pairs_output =
             match ec2.describe_key_pairs().key_names(key_name).send().await {
@@ -155,7 +183,7 @@ async fn config() {
         };
 
         let pk_path = match std::env::current_dir() {
-            Ok(current_dir) => current_dir.join(format!("{project_name}-ci-build.pem")),
+            Ok(current_dir) => current_dir.join(format!("{resource_prefix}-ci-build.pem")),
             Err(e) => {
                 eprintln!("Failed to get current directory: {e:?}");
                 build_failure();
@@ -193,7 +221,7 @@ async fn config() {
             aws_sdk_ec2::types::LaunchTemplateConfig::builder()
                 .launch_template_specification(
                     FleetLaunchTemplateSpecification::builder()
-                        .launch_template_name(format!("{project_name}-ci-build"))
+                        .launch_template_name(format!("{resource_prefix}-ci-build"))
                         .version("$Latest")
                         .build(),
                 )
@@ -562,5 +590,54 @@ impl State {
         let location = Self::location()?;
         tracing::debug!(?location, "Cleaning up state file");
         Ok(std::fs::remove_file(location)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/project"),
+            Some("project".to_string())
+        );
+    }
+
+    #[test]
+    fn three_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/group/project"),
+            Some("group-project".to_string())
+        );
+    }
+
+    #[test]
+    fn four_level_path() {
+        assert_eq!(
+            resource_prefix_from_project_path("org/a/b/c"),
+            Some("a-b-c".to_string())
+        );
+    }
+
+    #[test]
+    fn single_component() {
+        assert_eq!(resource_prefix_from_project_path("org"), None);
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(resource_prefix_from_project_path(""), None);
+    }
+
+    #[test]
+    fn trailing_slash() {
+        assert_eq!(resource_prefix_from_project_path("org/project/"), None);
+    }
+
+    #[test]
+    fn double_slash() {
+        assert_eq!(resource_prefix_from_project_path("org//project"), None);
     }
 }
